@@ -1,0 +1,18 @@
+{% load static %}
+
+<link rel="stylesheet" href="{% static 'item/style.css' %}">
+<body>
+{% if items %}
+    <ul>
+    {% for item in items %}
+        <li><a href="{% url 'item:detail' item.id %}">{{ item.name }}</a></li>
+        <div class="mt-6 p-6 rounded-xl">
+            <a href="{% url 'item:edit' item.id %}" class="inline-block mt-6 px-9 py-3 text-lg bg-teal-500 text-white rounded-xl"> Edit </a> </br>
+            <a href="{% url 'item:delete' item.id %}" class="inline-block mt-6 px-6 py-3 text-lg bg-red-500 text-white rounded-xl"> Delete</a>
+        </div>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No items are available.</p>
+{% endif %}
+</body>

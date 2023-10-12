@@ -1,0 +1,12 @@
+<!-- temporary view, location for testing purpose only-->
+{% load socialaccount %}
+{% if user.is_authenticated %}
+{% else %}
+    <div>
+        <a href="{% provider_login_url 'github' %}" class="mt-6">Sign In With Github</a>
+    </div>
+    <div>
+        <a href="{% provider_login_url 'google' %}" class="mt-6">Sign In With Google</a>
+    </div>
+
+{% endif %}

@@ -1,0 +1,29 @@
+{% extends "account/base_entrance.html" %}
+{% load  i18n socialaccount %}
+{% block title %}
+    {% trans "Signup" %}
+{% endblock title %}
+{% block content %}
+    <div class="w-1/2 p-6 mu-6 mx-auto bg-gray-100 rounded-xl ">
+        <h1 class="mb-5 text-3xl text-center">Sign up</h1>
+        <form id="signup_form" method="post" action="{% url 'account_signup' %}" novalidate>
+            {% include "account/_render_form.html" %}
+            {% include "account/_button.html" with text="Sign up" %}
+        </form>
+
+        <p class="mt-6">
+            {% blocktrans %}Already have an account? Then please <a href="{{ login_url }}" class="text-teal-500 hover:text-teal-700">sign in</a>.{% endblocktrans %}
+        </p>
+        {% url 'account_signup' as action_url %}
+        <form form=form method="post" action=action_url tags="entrance,signup" >
+                {% csrf_token %}
+
+                {% if redirect_field_value %}
+                    <input type="hidden"
+                        name="{{ redirect_field_name }}"
+                        value="{{ redirect_field_value }}" type="button"/>
+                {% endif %}
+
+        </form>
+    </div>
+{% endblock content %}

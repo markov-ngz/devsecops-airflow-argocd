@@ -1,0 +1,18 @@
+{% extends 'core/base.html' %}
+{% load widget_tweaks %}
+{% block title %}Deletion{% endblock %}
+{% block content %}
+<div class="mx-auto my-24 rounded-xl w-1/2 bg-gray-100">
+    <form id='delete' action="{% url 'core:delete_account' %}" method="post"  class="flex flex-col justify-center items-center p-10">
+    {% for field in form.visible_fields %}
+    <div class="mb-4">
+        {% csrf_token %}
+        {{ field|add_label_class:"font-semibold text-xl" }}
+    </div>
+    {% render_field field class="flex items-center w-64 h-12 px-4 pb-2 mt-2 rounded focus:outline-none accent-red-500" %}
+    <!-- {{ form.as_p }} -->
+    {% endfor %}
+    <button id="delete-button" type="submit" class="text-red-500 hover:text-red-700 mt-6">Submit Deletion</button>
+    </form>
+</div>
+{% endblock %}
