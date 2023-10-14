@@ -2,16 +2,19 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse, Http404
 from django.urls import reverse
 from django.views import generic
+from django.contrib.auth.decorators import login_required
 
 from .models import *
 from .forms import NewItemForm, EditItemForm
 
 # Create your views here.
+@login_required
 def index(request):
         items = Item.objects.order_by("created_at")
         context = {"items":items} # response must be a dict, not a QuerySet
         return render(request,"item/index.html", context)
 
+@login_required
 def detail (request, pk):
         # try:
         #         item = Item.objects.get(pk=pk)
@@ -20,6 +23,7 @@ def detail (request, pk):
         item = get_object_or_404(Item, pk = pk)
         return render(request,"item/detail.html", {"item":item} )
 
+@login_required
 def new(request):
     if request.method == 'POST':
         form = NewItemForm(request.POST)
@@ -36,7 +40,7 @@ def new(request):
                   'title':'Adding Items'
     })
 
-
+@login_required
 def edit(request, pk ):
     item = get_object_or_404(Item, pk=pk)
     if request.method == 'POST':
@@ -54,7 +58,7 @@ def edit(request, pk ):
                   'form':form,
                   'title':'Edit Items'
     })
-
+@login_required
 def delete(request, pk):
     item = get_object_or_404(Item, pk=pk)
     item.delete()

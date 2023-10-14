@@ -1,18 +1,29 @@
+{% extends 'core/base.html' %}
+{% block title %}Item  {% endblock %} 
+{% block content %}
 {% load static %}
-
 <link rel="stylesheet" href="{% static 'item/style.css' %}">
-<body>
-{% if items %}
-    <ul>
-    {% for item in items %}
-        <li><a href="{% url 'item:detail' item.id %}">{{ item.name }}</a></li>
-        <div class="mt-6 p-6 rounded-xl">
-            <a href="{% url 'item:edit' item.id %}" class="inline-block mt-6 px-9 py-3 text-lg bg-teal-500 text-white rounded-xl"> Edit </a> </br>
-            <a href="{% url 'item:delete' item.id %}" class="inline-block mt-6 px-6 py-3 text-lg bg-red-500 text-white rounded-xl"> Delete</a>
-        </div>
-    {% endfor %}
-    </ul>
-{% else %}
-    <p>No items are available.</p>
-{% endif %}
-</body>
+<div class="flex flex-col items-center">
+    <div class="">
+        {% if items %}
+            <ul>
+            {% for item in items %}
+                <li><a href="{% url 'item:detail' item.id %}">{{ item.name }}</a></li>
+                <div class="mt-6 p-6 rounded-xl">
+                    <a href="{% url 'item:edit' item.id %}" class="inline-block mt-6 px-9 py-3 text-lg bg-teal-500 text-white rounded-xl"> Edit </a> </br>
+                    <a href="{% url 'item:delete' item.id %}" class="inline-block mt-6 px-6 py-3 text-lg bg-red-500 text-white rounded-xl"> Delete</a>
+                </div>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>No items are available.</p>
+        {% endif %}
+    </div>
+    <div class="bg-gray-100 rounded-xl w-1/2 p-5 flex justify-center mt-10">
+        <p class="font-semibold text-xl">
+            Would you like to add an item ? 
+            <a href="{% url 'item:new' %}" class="inline-block mt-6 px-9 py-3 text-lg bg-teal-500 text-white rounded-xl ml-8"> Add</a> </br>
+        </p>
+    </div>
+</div>
+{% endblock %}

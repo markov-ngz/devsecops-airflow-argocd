@@ -27,7 +27,12 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-
+# to store images that are not tied to apps 
+# it define a base path to look for other statics
+# STATICFILES_DIRS = [
+#     BASE_DIR / "static",
+#     "/var/www/static/",
+# ]
 # Application definition
 
 INSTALLED_APPS = [
@@ -67,6 +72,8 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'mysite.urls'
+
+STATIC_URL = 'static/'
 
 TEMPLATES = [
     {
@@ -169,6 +176,10 @@ ACCOUNT_LOGOUT_ON_GET= True
 ACCOUNT_UNIQUE_EMAIL = True
 # ACCOUNT_EMAIL_REQUIRED = False
 
+# customizing sign up form 
+ACCOUNT_FORMS = {
+'signup': 'mysite.forms.CustomSignupForm',
+}
 
 # ACCOUNT_USER_MODEL_USERNAME_FIELD = None resolves integrity error ? set to email to test
 ACCOUNT_EMAIL_REQUIRED = True
