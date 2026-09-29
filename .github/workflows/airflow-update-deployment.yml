@@ -1,0 +1,353 @@
+# Gitops Repository 
+
+name: Update Airflow Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - pprd
+          - prod
+      # inputs when the image is updated
+      image-name:
+        description: "Docker image name (registry/repository)"
+        required: false
+        type: string
+      image-tag:
+        description: "Docker image tag"
+        required: false
+        type: string
+      # inputs when the dag ref branch is updated
+      git-dag-bundle-name:
+        description: "Git dag bundle name identifier"
+        required: false
+        type: string
+      git-dag-bundle-tracking-ref:
+        description: "Git dag bundle trackingref to update" # used to dynamically update release branch ref
+        required: false
+        type: string
+      mode:
+        description: "Submit deployment or automatically deploy to specified environment ( not available for prod )"
+        required: true
+        type: choice
+        options:
+          - submit
+          - deploy
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    
+    outputs:
+      pull-request-number : ${{ steps.open-pr.outputs.pull-request-number }}
+      pull-request-url    : ${{ steps.open-pr.outputs.pull-request-url }}
+      pull-request-branch : ${{ steps.branch.outputs.branch }}
+    
+    env:
+      ENV                          : ${{ inputs.environment }}
+      IMAGE_NAME                   : ${{ inputs.image-name }}
+      IMAGE_TAG                    : ${{ inputs.image-tag }}
+      GIT_DAG_BUNDLE_TRACKING_REF  : ${{ inputs.git-dag-bundle-tracking-ref }}
+      GIT_DAG_BUNDLE_NAME          : ${{ inputs.git-dag-bundle-name }}
+      # Constants
+      SKOPEO_IMAGE_REGISTRY_PREFIX : docker
+      IMAGE_REGISTY_ADDRESS        : docker.io
+      VALUES_FILE                  : kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+    steps:
+      # ------------------------------------------------------------------
+      # Verify inputs
+      # ------------------------------------------------------------------
+      - name: Verify inputs
+        id: verify-inputs
+        run: |
+          set -euo pipefail
+          
+          # Initialize flags
+          UPDATE_IMAGE=false
+          UPDATE_DAG_REF=false
+          
+          # 1. Check if both image name and image tag are provided (non-empty)
+          if [[ -n "${IMAGE_NAME}" && -n "${IMAGE_TAG}" ]]; then
+            echo "💡 Both IMAGE_NAME and IMAGE_TAG are provided."
+            UPDATE_IMAGE=true
+          elif [[ -n "${IMAGE_NAME}" || -n "${IMAGE_TAG}" ]]; then
+            echo "::error::Incomplete image details passed. Both IMAGE_NAME and IMAGE_TAG must be set together."
+            exit 1
+          fi
+          
+          # 2. Check if both DAG tracking ref and DAG bundle name are provided (non-empty)
+          if [[ -n "${GIT_DAG_BUNDLE_TRACKING_REF}" && -n "${GIT_DAG_BUNDLE_NAME}" ]]; then
+            echo "💡 Both GIT_DAG_BUNDLE_TRACKING_REF and GIT_DAG_BUNDLE_NAME are provided."
+            UPDATE_DAG_REF=true
+          elif [[ -n "${GIT_DAG_BUNDLE_TRACKING_REF}" || -n "${GIT_DAG_BUNDLE_NAME}" ]]; then
+            echo "::error::Incomplete DAG bundle details passed. Both GIT_DAG_BUNDLE_TRACKING_REF and GIT_DAG_BUNDLE_NAME must be set together."
+            exit 1
+          fi
+          
+          # 3. Raise error if neither condition evaluated to true
+          if [[ "${UPDATE_IMAGE}" != "true" && "${UPDATE_DAG_REF}" != "true" ]]; then
+            echo "::error::Invalid inputs: You must provide either both image parameters (image-name, image-tag) or both DAG bundle parameters (git-dag-bundle-tracking-ref, git-dag-bundle-name)."
+            exit 1
+          fi
+          
+          # Export flags to GitHub Step Outputs for downstream workflow usage
+          echo "update-image=${UPDATE_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "update-dag-ref=${UPDATE_DAG_REF}" >> "$GITHUB_OUTPUT"
+          
+          # Validate Environment
+          VALID_ENVS=("dev" "pprd" "prod")
+          if [[ ! " ${VALID_ENVS[*]} " =~ " ${ENV} " ]]; then
+            echo "::error::Environment '${ENV}' is invalid. Must be one of: dev, pprd, prod"
+            exit 1
+          fi
+          
+          echo "✅ Inputs validated — update_image=${UPDATE_IMAGE}, update_dag_ref=${UPDATE_DAG_REF}, env=${ENV}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # Use a PAT so the pushed branch can later trigger PR workflows
+          token: ${{ secrets.GH_PAT_PR }}
+
+      - name: Install yq
+        uses: mikefarah/yq@c14f446382944492701b16c1ddb48bb9dbe683e3 # v4.53.6
+
+      - name: Check value file is correctly referenced
+        id: values-file
+        run: |
+          if [[ ! -f "${VALUES_FILE}" ]]; then
+            echo "::error::Values file not found: ${VALUES_FILE}"
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # Create working branch
+      # ------------------------------------------------------------------
+
+      - name: Configure git
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create update branch
+        id: branch
+        run: |
+          # Set branch name
+          BRANCH="chore/update-${ENV}-airflow-${TAG}"
+
+          # Delete remote if it already exists
+          BRANCH_CHECK=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" 2>/dev/null || true)
+
+          BRANCH_CHECK_REF=$(echo "${BRANCH_CHECK}" | jq -r '.ref // empty')
+
+          # Delete remote if it already exists exists 
+          if [[ -n "${BRANCH_CHECK_REF}" ]]; then
+            echo "Remote branch ${BRANCH} exists (${BRANCH_CHECK_REF}) — deleting it"
+
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
+          fi
+
+          git checkout -b "${BRANCH}"
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "✅ Branch created: ${BRANCH}" >> "$GITHUB_STEP_SUMMARY"
+
+
+      # ------------------------------------------------------------------
+      # Dag Ref update : Update git dag bundle ref
+      # ------------------------------------------------------------------
+      - name: Update git dag bundle tracking ref
+        if: steps.verify-inputs.output.update-dag-ref == 'true'
+        run: |
+          
+          yq -i '(.dagProcessor.dagBundleConfigList[] | select(.name == "'$GIT_DAG_BUNDLE_NAME'")).kwargs.tracking_ref = env(GIT_DAG_BUNDLE_TRACKING_REF)' "${VALUES_FILE}"
+          
+          DIFF="$(git diff -- "${VALUES_FILE}")"
+          echo "${DIFF}"
+
+      - name: Commit manifest changes
+        if: steps.verify-inputs.output.update-dag-ref == 'true'
+        run: |
+          git add kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+          git commit -m "chore(${{ inputs.environment }}): update git dag bundle ref to ${{ inputs.image-tag }}"
+          
+
+      # ------------------------------------------------------------------
+      # Image update : Verify image existence
+      # ------------------------------------------------------------------
+
+      - name: Cache Skopeo
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        id: cache-skopeo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/bin/skopeo
+          key: skopeo-linux-amd64
+
+      - name: Install skopeo
+        if: steps.cache-skopeo.outputs.cache-hit != 'true' && steps.verify-inputs.outputs.update-image == 'true'
+        run: |
+          sudo apt update -y
+          sudo apt install skopeo -y
+
+      - name: Login with skopeo
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        env:
+          USERNAME: ${{ secrets.DOCKERHUB_AIRFLOW_CICD_USERNAME }}
+          PASSWORD: ${{ secrets.DOCKERHUB_AIRFLOW_CICD_PAT }}
+        run: skopeo login $IMAGE_REGISTY_ADDRESS -u $USERNAME -p $PASSWORD
+
+      - name: Check for pre-built develop image
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        id: check
+        run: |
+          FULL_IMAGE=$IMAGE_NAME:$IMAGE_TAG
+          echo "Checking if $FULL_IMAGE exists"
+
+          TAGS_JSON=$(skopeo list-tags $SKOPEO_IMAGE_REGISTRY_PREFIX://$IMAGE)
+          echo "List of tags available for registry are :"
+          echo $TAGS_JSON
+          TAGS_LIST=$(echo "$TAGS_JSON" | jq -r '.Tags[]')
+
+          if  grep -qx "$IMAGE_TAG" <<< "$TAGS_LIST";  then
+            echo "✅ The image tag $IMAGE_TAG exists in the repository."
+          else
+            echo "❌ The image tag $IMAGE_TAG does NOT exist in the repository."
+            exit 1
+          fi
+      - name: Inspect image to get the digest
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        id: inspect-image
+        run: |
+          FULL_IMAGE=$IMAGE_NAME:$IMAGE_TAG
+          SKOPEO_INSPECT=$(skopeo inspect $SKOPEO_IMAGE_REGISTRY_PREFIX://$FULL_IMAGE)
+          
+          DIGEST=$(echo $SKOPEO_INSPECT | jq -r '.Digest')
+          
+          echo "image-digest=DIGEST" >> "$GITHUB_OUTPUT"
+
+      # ------------------------------------------------------------------
+      # Image update : Update manifest content
+      # ------------------------------------------------------------------
+
+      - name: Update Airflow image
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        env:
+          IMAGE_DIGEST: ${{ steps.inspect-image.outputs.image-digest }}
+        run: |
+          set -euo pipefail
+
+          echo "Updating ${VALUES_FILE}"
+
+          yq -i '.images.airflow.repository = strenv(IMAGE_NAME)' "${VALUES_FILE}"
+          yq -i '.images.airflow.digest = strenv(IMAGE_DIGEST)'   "${VALUES_FILE}"
+
+          echo "✅ values.yaml updated"
+          DIFF="$(git diff -- "${VALUES_FILE}")"
+
+          echo "${DIFF}"
+
+      - name: Commit manifest changes
+        if: steps.verify-inputs.outputs.update-image == 'true'
+        run: |
+          git add kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+          git commit -m "chore(${{ inputs.environment }}): update airflow image to ${{ inputs.image-tag }}"
+
+      # ------------------------------------------------------------------
+      # Create Pull Request
+      # ------------------------------------------------------------------
+      - name: Push changes
+        run: git push origin "${{ steps.branch.outputs.branch }}"
+      - name: Build Pull Request content
+        id: pr
+        env:
+          UPDATE_IMAGE: ${{ steps.verify-inputs.outputs.update-image }}
+          UPDATE_DAG_REF: ${{ steps.verify-inputs.outputs.update-dag-ref }}
+        run: |
+          set -euo pipefail
+          
+          TITLE="chore(${ENV}): update Airflow deployment"
+          
+          {
+            echo "Updates done :"
+          
+            if [[ "${UPDATE_IMAGE}" == "true" ]]; then
+              cat <<EOF
+          
+          ## 🛸 Airflow Image Update — \`${ENV}\`
+          
+          | Field       | Value |
+          |-------------|-------|
+          | Environment | \`${ENV}\` |
+          | Image       | \`${IMAGE_NAME}\` |
+          | Tag/Digest  | \`${IMAGE_TAG}\` |
+          | Triggered by | @${{ github.actor }} |
+          
+          ### Changes
+          Updated \`${VALUES_FILE}\` with the new image reference.
+          EOF
+            fi
+          
+            if [[ "${UPDATE_DAG_REF}" == "true" ]]; then
+              cat <<EOF
+          
+          ## 📦 Airflow DAG Bundle Update — \`${ENV}\`
+          
+          | Field        | Value |
+          |--------------|-------|
+          | Environment  | \`${ENV}\` |
+          | Bundle Name  | \`${GIT_DAG_BUNDLE_NAME}\` |
+          | Tracking Ref | \`${GIT_DAG_BUNDLE_TRACKING_REF}\` |
+          | Triggered by | @${{ github.actor }} |
+          
+          ### Changes
+          Updated \`${VALUES_FILE}\` with the new DAG bundle tracking reference.
+          EOF
+            fi
+          } > body.md
+          
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+      - name: Open Pull Request
+        id: open-pr
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_PR }}
+        run: |
+          PR_URL=$(gh pr create \
+            --title "${{ steps.pr.outputs.title }}" \
+            --base main \
+            --body-file body.md)
+          
+          PR_NUMBER=$( basename $PR_URL)
+          
+          echo "pull-request-number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "pull-request-url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Pull Request created"
+            echo
+            echo "- **PR:** #${PR_NUMBER}"
+            echo "- **URL:** [#${PR_NUMBER}](${PR_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+      - name: Automatically merge
+        if: inputs.mode == 'deploy' && inputs.environment != 'prod'
+        env:
+          PULL_REQUEST_NUMBER: ${{ steps.open-pr.outputs.pull-request-number }}
+          GH_TOKEN: ${{ secrets.GH_PAT_PR }}
+        run: |
+          gh pr merge $PULL_REQUEST_NUMBER \
+          --squash \
+          --delete-branch
+
+          echo "Automatic Merge executed" >> "$GITHUB_STEP_SUMMARY"
+

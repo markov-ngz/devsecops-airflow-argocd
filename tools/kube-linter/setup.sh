@@ -1,0 +1,1 @@
+go install golang.stackrox.io/kube-linter/cmd/kube-linter@$(cat .kube-linter-version)

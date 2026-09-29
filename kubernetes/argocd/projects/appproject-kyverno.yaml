@@ -1,0 +1,43 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: "Project for Cluster Governance"
+  sourceRepos:
+    - 'https://kyverno.github.io/kyverno/'
+    - 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+
+  destinations:
+    - namespace: "kyverno-*"
+      server: 'https://kubernetes.default.svc'
+    - namespace: "kyverno"
+      server: 'https://kubernetes.default.svc'
+
+
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    # New policies.kyverno.io namespaced types (Kyverno 1.14+)
+    - group: policies.kyverno.io
+      kind: ValidatingPolicy
+    - group: policies.kyverno.io
+      kind: ImageValidatingPolicy
+    - group: policies.kyverno.io
+      kind: MutatingPolicy
+    - group: policies.kyverno.io
+      kind: GeneratingPolicy
+    # Classic namespaced Kyverno policy
+    - group: kyverno.io
+      kind: Policy
+    - group: kyverno.io
+      kind: PolicyException

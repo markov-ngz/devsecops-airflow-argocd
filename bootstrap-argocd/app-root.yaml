@@ -1,0 +1,23 @@
+# ArgocD Init step 2 : one time run
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: argocd
+  source:
+    repoURL: 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+    targetRevision: main
+    path: kubernetes/argocd/apps
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true

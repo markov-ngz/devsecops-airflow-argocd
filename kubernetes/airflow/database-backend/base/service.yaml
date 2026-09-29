@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  annotations:
+    ignore-check.kube-linter.io/dangling-service: "Base layer  namespace and pods injected by Kustomize overlay at build time"
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432

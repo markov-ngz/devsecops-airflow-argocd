@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: airflow-project
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: "Project for Airflow Helm deployments"
+
+  sourceRepos:
+    - 'https://airflow.apache.org'
+    - 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+  destinations:
+    - namespace: "dev-airflow-*"
+      server: 'https://kubernetes.default.svc'
+    - namespace: "pprd-airflow-*"
+      server: 'https://kubernetes.default.svc'
+    - namespace: "prod-airflow-*"
+      server: 'https://kubernetes.default.svc'
+
+  # Ugly : Allow Airflow to manage cluster-wide/namespace resources (CRDs, Roles, etc.)
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'

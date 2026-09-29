@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: security
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: "Project for dependency track tool"
+
+  sourceRepos:
+    - 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+    - 'ghcr.io/dependencytrack/helm-charts'
+
+  destinations:
+    - namespace: "security-dependency-track"
+      server: 'https://kubernetes.default.svc'
+    - namespace: "security-*"
+      server: 'https://kubernetes.default.svc'
+  clusterResourceWhitelist: []
+
+  namespaceResourceBlacklist:
+    - group: ''
+      kind: ResourceQuota
+    - group: ''
+      kind: LimitRange

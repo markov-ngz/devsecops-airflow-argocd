@@ -1,0 +1,41 @@
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-airflow-images
+  namespace: k8s-governance-kyverno
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    resourceRules:
+      - apiGroups:   [""]
+        apiVersions: ["v1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["pods"]
+    namespaceSelector:
+      matchLabels:
+        image-verification: required
+  matchImageReferences:
+    - glob: "docker.io/markreduce/dev-airflow-cicd*"
+    - glob: "docker.io/markreduce/pprd-airflow-cicd*"
+    - glob: "docker.io/markreduce/prod-airflow-cicd*"
+  attestors:
+    - name: cosign
+      cosign:
+        key:
+          data: |
+            -----BEGIN PUBLIC KEY-----
+            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/wsr8zT+ly0g+GH3l6pnsRw/sqxq
+            nhMZ62y8NZ2zt7SBJ4/bx1HldQ7qmMCIhLTLjFN9Js6iHEMiSG24NhI2KQ==
+            -----END PUBLIC KEY-----
+  validationConfigurations:
+    verifyDigest: true
+    mutateDigest: true
+    required: true
+  validations:
+    - expression: >-
+        images.containers.map(image,
+          verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
+      message: "Image signature verification failed. Image must be signed with the authorized key."
+
+

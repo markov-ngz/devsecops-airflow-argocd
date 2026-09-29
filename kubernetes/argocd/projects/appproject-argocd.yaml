@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: "Project for Argocd to deploy itself"
+  sourceRepos:
+    - 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+    - 'https://argoproj.github.io/argo-helm'
+
+  destinations:
+    - namespace: "argocd"
+      server: 'https://kubernetes.default.svc'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'

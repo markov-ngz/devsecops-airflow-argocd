@@ -1,0 +1,58 @@
+# kubernetes/argocd/apps/argocd/app-argocd-self.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-self
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: argocd
+
+  sources:
+    # Source 1: Private SSH repo holding values file (must be listed first)
+    - repoURL: 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+      targetRevision: main
+      ref: values
+
+    # Source 2: Official argo-cd Helm chart — same version as the initial helm install
+    - repoURL: 'https://argoproj.github.io/argo-helm'
+      chart: argo-cd
+      targetRevision: "10.9.0"
+      helm:
+        releaseName: argocd          # must match the original `helm install argocd` release name
+        valueFiles:
+          - $values/kubernetes/argocd/install/argocd-helm-values.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      selfHeal: true   # revert any manual drift on argocd itself
+      prune: false     # never auto-delete argocd resources
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true        # avoids annotation size limit on argocd CRDs
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
+
+  ignoreDifferences:
+    # argocd mutates these fields at runtime — ignore them to prevent constant drift
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: ""
+      kind: Secret
+      name: argocd-secret
+      jsonPointers:
+        - /data

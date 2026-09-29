@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: airflow-core
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env: dev
+          # - env: pprd
+          # - env: prod
+
+  template:
+    metadata:
+      name: '{{env}}-airflow-core'
+    spec:
+      project: airflow-project
+
+      sources:
+        # Source 1: Official Helm chart
+        - repoURL: 'https://airflow.apache.org'
+          chart: airflow
+          targetRevision: 1.22.0
+          helm:
+            releaseName: airflow
+            valueFiles:
+              - '$values/kubernetes/airflow/core/envs/{{env}}/airflow-helm-values.yaml'
+
+        # Source 2: Private SSH repo
+        - repoURL: 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+          targetRevision: main
+          ref: values
+
+      destination:
+        server: 'https://kubernetes.default.svc'
+        namespace: '{{env}}-airflow-core'
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

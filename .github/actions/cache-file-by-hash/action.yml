@@ -1,0 +1,144 @@
+# Composite action: cache a file or binary by its SHA-256 hash.
+#
+# PERMISSIONS REQUIRED (set on the calling workflow or job):
+#   actions: write   – required for actions/cache to write cache entries
+#   contents: read   – required to checkout the repo (if used in same job)
+
+name: "Cache File by Hash"
+description: >
+  Saves a binary/file to the GitHub Actions cache with an appended key :
+    For a single file   → hash of the file.
+    For a directory     → hash a sorted listing of all file hashes
+  Useful to avoid re-downloading large or slow-to-install binaries across workflow runs.
+
+# --------------------------------------------------------------------------
+# Inputs
+# --------------------------------------------------------------------------
+inputs:
+  path:
+    description: Absolute or workspace-relative path to the file or directory to cache.
+    required: true
+
+  base-cache-key:
+    description: |
+      Prefix for the cache key. The SHA-256 hash of the file at `file-path`
+      will be appended, producing a key like:
+        <base-cache-key>-<sha256>
+      Example: "markov-" becomes "markov-<sha>"
+    required: true
+
+# --------------------------------------------------------------------------
+# Outputs
+# --------------------------------------------------------------------------
+outputs:
+  cache-primary-key:
+    description: >
+      The fully-resolved primary cache key that was used
+      (i.e. <base-cache-key>-<sha256>).
+    value: ${{ steps.build-cache-key.outputs.cache-key }}
+
+# --------------------------------------------------------------------------
+# Implementation
+# --------------------------------------------------------------------------
+runs:
+  using: "composite"
+  steps:
+
+    # -----------------------------------------------------------------------
+    # Verify the target file/directory exists
+    # -----------------------------------------------------------------------
+    - name: Verify file exists
+      id: verify-file
+      shell: bash
+      run: |
+        FILE_PATH="${{ inputs.path }}"
+
+        if [[ ! -e "${FILE_PATH}" ]]; then
+          echo "::error title=Cache Binary::File or directory not found: ${FILE_PATH}"
+          echo "::notice title=Cache Binary::Tip — ensure the install step runs before this action."
+          echo "file-exists=false" >> "${GITHUB_OUTPUT}"
+
+          # Write a user-friendly summary so the run page explains the failure
+          {
+            echo "## ❌ Cache Binary — File Not Found"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Expected path | \`${FILE_PATH}\` |"
+            echo "| Base cache key | \`${{ inputs.base-cache-key }}\` |"
+            echo "| Runner OS | \`${RUNNER_OS}\` |"
+            echo ""
+            echo "> The file or directory to cache was not found."
+            echo "> Ensure the install step runs **before** calling this action."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          exit 1
+        fi
+
+        echo "file-exists=true" >> "${GITHUB_OUTPUT}"
+
+    # -----------------------------------------------------------------------
+    # Compute the SHA-256 hash of the file (or a stable hash of the
+    #   directory tree) and build the full cache key.
+    # -----------------------------------------------------------------------
+    - name: Compute hash and build cache key
+      id: build-cache-key
+      shell: bash
+      run: |
+        FILE_PATH="${{ inputs.path }}"
+        BASE_KEY="${{ inputs.base-cache-key }}"
+
+        if [[ -f "${FILE_PATH}" ]]; then
+          # Single file — hash it directly
+          FILE_HASH=$(sha256sum "${FILE_PATH}" | awk '{ print $1 }')
+        elif [[ -d "${FILE_PATH}" ]]; then
+          # Directory — produce a stable hash of all contained files
+          FILE_HASH=$(
+            find "${FILE_PATH}" -type f \
+              | sort \
+              | xargs sha256sum \
+              | sha256sum \
+              | awk '{ print $1 }'
+          )
+        else
+          echo "::error title=Cache Binary::Path is neither a file nor a directory: ${FILE_PATH}"
+          exit 1
+        fi
+
+        CACHE_KEY="${BASE_KEY}${FILE_HASH}"
+        echo "file-hash=${FILE_HASH}"    >> "${GITHUB_OUTPUT}"
+        echo "cache-key=${CACHE_KEY}"   >> "${GITHUB_OUTPUT}"
+
+        echo "Computed hash : ${FILE_HASH}"
+        echo "Full cache key: ${CACHE_KEY}"
+
+    # -----------------------------------------------------------------------
+    #  Save the file/directory to the cache under the hash-based key.
+    # -----------------------------------------------------------------------
+    - name: Save to cache
+      id: save-cache
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4.2.3
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ steps.build-cache-key.outputs.cache-key }}
+
+    # -----------------------------------------------------------------------
+    #  Write a step summary
+    # -----------------------------------------------------------------------
+    - name: Write step summary
+      if: always()
+      id: write-summary
+      shell: bash
+      run: |
+        
+        PRIMARY_KEY="${{ steps.build-cache-key.outputs.cache-key }}"
+        
+        {
+          echo "## 📦 Cache file by hash — ${STATUS}"
+          echo ""
+          echo "| Field | Value |"
+          echo "|-------|-------|"
+          echo "| File path       | \`${{ inputs.path }}\` |"
+          echo "| File hash       | \`${{ steps.build-cache-key.outputs.file-hash }}\` |"
+          echo "| Primary key     | \`${PRIMARY_KEY}\` |"
+        } >> "${GITHUB_STEP_SUMMARY}"

@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dependency-track
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: security
+
+  sources:
+    - repoURL: 'ghcr.io/dependencytrack/helm-charts'
+      chart: dependency-track
+      targetRevision: 2.5.0
+      helm:
+        releaseName: dependency-track
+        valueFiles:
+          - '$values/kubernetes/dependency-track/values-quickstart.yaml'
+
+    - repoURL: 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: 'security-dependency-track'
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

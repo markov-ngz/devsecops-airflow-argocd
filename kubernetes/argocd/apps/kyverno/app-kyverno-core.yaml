@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-core
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0" # ensures deployment before policies
+spec:
+  project: kyverno
+
+  sources:
+    # Source 1: Kyverno Helm chart from the official repo
+    - repoURL: 'https://kyverno.github.io/kyverno/'
+      chart: kyverno
+      targetRevision: 3.9.1
+      helm:
+        releaseName: kyverno
+        valueFiles:
+          - '$values/kubernetes/kyverno/core/kyverno-helm-values.yaml'
+
+    # Source 2: Private SSH repo holding values file
+    - repoURL: 'git@github.com:markov-ngz/devsecops-lab-gitops.git'
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: 'kyverno'
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
