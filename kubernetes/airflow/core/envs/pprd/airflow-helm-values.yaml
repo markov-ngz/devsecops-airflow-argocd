@@ -72,15 +72,15 @@ defaultAirflowDigest: ~
 
 # Airflow version (Used to make some decisions based on Airflow Version being deployed)
 # Version 3.1.0 and above is supported.
-airflowVersion: "3.2.2"
+airflowVersion: "3.3.2"
 
 images:
   airflow:
-    repository: apache/airflow
-    tag: 3.3.1
+    repository: docker.io/markreduce/pprd-airflow-cicd
+    tag: ~
     # Specifying digest takes precedence over tag.
-    digest: ~
-    pullPolicy: IfNotPresent
+    digest: sha256:bf134ea85d77718ed0563b5d4af629347edcd97ad7b8f08b07b8930f15fcb31a
+    pullPolicy: Always
   # To avoid images with user code, you can turn this to 'true' and
   # all the 'run-airflow-migrations' and 'wait-for-airflow-migrations' jobs/containers
   # will use the images from 'defaultAirflowRepository:defaultAirflowTag' values
@@ -484,7 +484,9 @@ extraEnv: ~
 
 # Extra envFrom 'items' that will be added to the definition of Airflow containers
 # A string is expected (templated).
-extraEnvFrom: ~
+extraEnvFrom: |-
+  - secretRef:
+      name: "airflow-git-conn-secret"
 # extraEnvFrom: |
 #   - secretRef:
 #       name: '{{ .Release.Name }}-airflow-connections'
@@ -512,7 +514,7 @@ data:
   #   postgresql+psycopg2://user:password@host/db
   resultBackendSecretName: ~
 
-  brokerUrlSecretName: ~
+  brokerUrlSecretName: airflow-broker-url-secret
 
   # If `metadataSecretName` is not specified, pass connection values below
   metadataConnection:
@@ -552,7 +554,7 @@ data:
 fernetKey: ~
 
 # If set, the secret must contain a 'fernet-key' key with a base64-encoded key value
-fernetKeySecretName: ~
+fernetKeySecretName: airflow-fernet-key
 # Fernet key secret example:
 #  kind: Secret
 #  apiVersion: v1
@@ -3007,24 +3009,25 @@ dagProcessor:
   # Define Dag bundles in a structured YAML format. This will be automatically
   # converted to JSON string format for `config.dag_processor.dag_bundle_config_list`.
   dagBundleConfigList:
+    - name: devsecops-lab-airflow
+      classpath: "airflow.providers.git.bundles.git.GitDagBundle"
+      kwargs:
+        git_conn_id: "git_repo_conn"
+        tracking_ref: "develop"
+        subdir: "airflow/dags"
+        refresh_interval: 60
+
     - name: dags-folder
       classpath: "airflow.dag_processing.bundles.local.LocalDagBundle"
       kwargs: {}
   # Example:
   # dagBundleConfigList:
-  #   - name: bundle1
-  #     classpath: "airflow.providers.git.bundles.git.GitDagBundle"
-  #     kwargs:
-  #       git_conn_id: "GITHUB__repo1"
-  #       subdir: "dags"
-  #       tracking_ref: "main"
-  #       refresh_interval: 60
   #   - name: bundle2
   #     classpath: "airflow.providers.git.bundles.git.GitDagBundle"
   #     kwargs:
   #       git_conn_id: "GITHUB__repo2"
   #       subdir: "dags"
-  #       tracking_ref: "develop"
+  #       tracking_ref: "pprdelop"
   #       refresh_interval: 120
   #   - name: dags-folder
   #     classpath: "airflow.dag_processing.bundles.local.LocalDagBundle"
@@ -3896,7 +3899,7 @@ redis:
   #  memory: 128Mi
 
   # If set use as redis secret. Make sure to also set `data.brokerUrlSecretName` value.
-  passwordSecretName: ~
+  passwordSecretName: airflow-redis-secret
 
   # If `passwordSecretName` is not specified, set `password` field.
   # Otherwise a new password will be generated on install
@@ -4342,7 +4345,7 @@ dags:
     enabled: false
 
     # Git repo clone url
-    repo: git@github.com:markov-ngz/maven-example-package.git
+    repo:
 
     branch: main
 
@@ -4350,7 +4353,7 @@ dags:
 
     # The number of consecutive failures allowed before aborting
     maxFailures: 0
-    subPath: "airflow/dags"
+    subPath:
 
     # If your repo needs a username/password, you can load them to a k8s secret
     #

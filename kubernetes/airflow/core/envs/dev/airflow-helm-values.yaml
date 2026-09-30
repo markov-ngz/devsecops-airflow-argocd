@@ -3009,12 +3009,12 @@ dagProcessor:
   # Define Dag bundles in a structured YAML format. This will be automatically
   # converted to JSON string format for `config.dag_processor.dag_bundle_config_list`.
   dagBundleConfigList:
-    - name: airflow-cicd
+    - name: devsecops-lab-airflow
       classpath: "airflow.providers.git.bundles.git.GitDagBundle"
       kwargs:
         git_conn_id: "git_repo_conn"
-        tracking_ref: "main" # TODO: replace by "develop"
-        subdir: "airflow-cicd/dags"
+        tracking_ref: "develop"
+        subdir: "airflow/dags"
         refresh_interval: 60
 
     - name: dags-folder

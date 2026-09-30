@@ -1,5 +1,4 @@
-# ArgocD Init step 0 : kubectl apply -f kubernetes/argocd/projects/appproject-argocd.yaml
-# ArgocD Init step 1 : one time run
+
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
