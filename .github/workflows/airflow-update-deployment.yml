@@ -202,8 +202,8 @@ jobs:
       - name: Login with skopeo
         if: steps.verify-inputs.outputs.update-image == 'true'
         env:
-          USERNAME: ${{ secrets.DOCKERHUB_AIRFLOW_CICD_USERNAME }}
-          PASSWORD: ${{ secrets.DOCKERHUB_AIRFLOW_CICD_PAT }}
+          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
         run: skopeo login $IMAGE_REGISTY_ADDRESS -u $USERNAME -p $PASSWORD
 
       - name: Check for pre-built develop image
