@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev-airflow-core
+
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pprd-airflow-core
+
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod-airflow-core
+
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno
+
+---
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-dependency-track
+
+---
