@@ -57,7 +57,7 @@ jobs:
       # Constants
       SKOPEO_IMAGE_REGISTRY_PREFIX : docker
       IMAGE_REGISTY_ADDRESS        : docker.io
-      VALUES_FILE                  : kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+      VALUES_FILE                  : kubernetes/airflow/core/envs/${{ inputs.environment }}/airflow-helm-values.yaml
     steps:
       # ------------------------------------------------------------------
       # Verify inputs
@@ -75,23 +75,17 @@ jobs:
           if [[ -n "${IMAGE_NAME}" && -n "${IMAGE_TAG}" ]]; then
             echo "💡 Both IMAGE_NAME and IMAGE_TAG are provided."
             UPDATE_IMAGE=true
-          elif [[ -n "${IMAGE_NAME}" || -n "${IMAGE_TAG}" ]]; then
-            echo "::error::Incomplete image details passed. Both IMAGE_NAME and IMAGE_TAG must be set together."
-            exit 1
           fi
           
           # 2. Check if both DAG tracking ref and DAG bundle name are provided (non-empty)
           if [[ -n "${GIT_DAG_BUNDLE_TRACKING_REF}" && -n "${GIT_DAG_BUNDLE_NAME}" ]]; then
             echo "💡 Both GIT_DAG_BUNDLE_TRACKING_REF and GIT_DAG_BUNDLE_NAME are provided."
             UPDATE_DAG_REF=true
-          elif [[ -n "${GIT_DAG_BUNDLE_TRACKING_REF}" || -n "${GIT_DAG_BUNDLE_NAME}" ]]; then
-            echo "::error::Incomplete DAG bundle details passed. Both GIT_DAG_BUNDLE_TRACKING_REF and GIT_DAG_BUNDLE_NAME must be set together."
-            exit 1
           fi
           
           # 3. Raise error if neither condition evaluated to true
           if [[ "${UPDATE_IMAGE}" != "true" && "${UPDATE_DAG_REF}" != "true" ]]; then
-            echo "::error::Invalid inputs: You must provide either both image parameters (image-name, image-tag) or both DAG bundle parameters (git-dag-bundle-tracking-ref, git-dag-bundle-name)."
+            echo "::error::Invalid inputs: Provide either both image parameters (image-name, image-tag) or both DAG bundle parameters (git-dag-bundle-tracking-ref, git-dag-bundle-name)."
             exit 1
           fi
           
@@ -141,7 +135,7 @@ jobs:
         id: branch
         run: |
           # Set branch name
-          BRANCH="chore/update-${ENV}-airflow-${TAG}"
+          BRANCH="chore/update-${ENV}-airflow-${IMAGE_TAG}"
 
           # Delete remote if it already exists
           BRANCH_CHECK=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" 2>/dev/null || true)
@@ -177,7 +171,7 @@ jobs:
       - name: Commit manifest changes
         if: steps.verify-inputs.output.update-dag-ref == 'true'
         run: |
-          git add kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+          git add $VALUES_FILE
           git commit -m "chore(${{ inputs.environment }}): update git dag bundle ref to ${{ inputs.image-tag }}"
           
 
@@ -213,7 +207,7 @@ jobs:
           FULL_IMAGE=$IMAGE_NAME:$IMAGE_TAG
           echo "Checking if $FULL_IMAGE exists"
 
-          TAGS_JSON=$(skopeo list-tags $SKOPEO_IMAGE_REGISTRY_PREFIX://$IMAGE)
+          TAGS_JSON=$(skopeo list-tags $SKOPEO_IMAGE_REGISTRY_PREFIX://$IMAGE_NAME)
           echo "List of tags available for registry are :"
           echo $TAGS_JSON
           TAGS_LIST=$(echo "$TAGS_JSON" | jq -r '.Tags[]')
@@ -233,7 +227,7 @@ jobs:
           
           DIGEST=$(echo $SKOPEO_INSPECT | jq -r '.Digest')
           
-          echo "image-digest=DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image-digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       # ------------------------------------------------------------------
       # Image update : Update manifest content
@@ -259,7 +253,7 @@ jobs:
       - name: Commit manifest changes
         if: steps.verify-inputs.outputs.update-image == 'true'
         run: |
-          git add kubernetes/airflow/overlays/${{ inputs.environment }}/values.yaml
+          git add $VALUES_FILE
           git commit -m "chore(${{ inputs.environment }}): update airflow image to ${{ inputs.image-tag }}"
 
       # ------------------------------------------------------------------
