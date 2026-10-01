@@ -15,16 +15,16 @@ patches:
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: "500m"
+        value: "250m"
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/memory
-        value: "2Gi"
+        value: "512Mi"
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/cpu
-        value: "2"
+        value: "1"
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
-        value: "4Gi"
+        value: "1Gi"
   - target:
       kind: StatefulSet
       name: postgres
@@ -38,4 +38,4 @@ patches:
     patch: |-
       - op: replace
         path: /spec/replicas
-        value: 2
+        value: 1

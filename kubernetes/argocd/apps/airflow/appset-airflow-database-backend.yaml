@@ -8,8 +8,8 @@ spec:
     - list:
         elements:
           - env: dev
-#          - env: pprd
-#          - env: prod
+          - env: pprd
+          - env: prod
 
   template:
     metadata:
