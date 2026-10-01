@@ -3,7 +3,7 @@ name: Validate infrastructure code
 on:
   pull_request:
     branches:
-      - develop
+      - main
     paths:
       - kubernetes/**
 
@@ -71,7 +71,7 @@ jobs:
       KYVERNO_CLI_VERSION: v1.19.1
       KYVERNO_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
       MANIFESTS_FOLDER: kubernetes
-      POLICIES_FOLDER: kubernetes/k8s-governance/kyverno/policies
+      POLICIES_FOLDER: kubernetes/kyverno/policies
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,6 +104,9 @@ jobs:
 
           echo "### Manifests to validate ($(wc -l < "$out"))" >> "$GITHUB_STEP_SUMMARY"
           sed 's/^/- `/; s/$/`/' "$out" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install kustomize pre built binaries to use it with kyverno
+        run: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
 
       - name: Install kyverno cli # manual as the GH-provided action seems deprecated
         if: steps.diff.outputs.count != '0'
