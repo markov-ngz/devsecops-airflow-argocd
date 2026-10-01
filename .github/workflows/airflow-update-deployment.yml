@@ -15,7 +15,7 @@ on:
           - prod
       # inputs when the image is updated
       image-name:
-        description: "Docker image name (registry/repository)"
+        description: "Docker image repository"
         required: false
         type: string
       image-tag:
@@ -42,6 +42,9 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
     
     outputs:
       pull-request-number : ${{ steps.open-pr.outputs.pull-request-number }}
@@ -133,14 +136,22 @@ jobs:
 
       - name: Create update branch
         id: branch
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_PR }}
         run: |
           # Set branch name
           BRANCH="chore/update-${ENV}-airflow-${IMAGE_TAG}"
 
           # Delete remote if it already exists
           BRANCH_CHECK=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" 2>/dev/null || true)
+          
+          echo Branch Check received payload :
+          echo $BRANCH_CHECK
 
           BRANCH_CHECK_REF=$(echo "${BRANCH_CHECK}" | jq -r '.ref // empty')
+          
+          echo Branch check :
+          echo $BRANCH_CHECK_REF
 
           # Delete remote if it already exists exists 
           if [[ -n "${BRANCH_CHECK_REF}" ]]; then
@@ -160,7 +171,7 @@ jobs:
       # Dag Ref update : Update git dag bundle ref
       # ------------------------------------------------------------------
       - name: Update git dag bundle tracking ref
-        if: steps.verify-inputs.output.update-dag-ref == 'true'
+        if: steps.verify-inputs.outputs.update-dag-ref == 'true'
         run: |
           
           yq -i '(.dagProcessor.dagBundleConfigList[] | select(.name == "'$GIT_DAG_BUNDLE_NAME'")).kwargs.tracking_ref = env(GIT_DAG_BUNDLE_TRACKING_REF)' "${VALUES_FILE}"
@@ -169,7 +180,7 @@ jobs:
           echo "${DIFF}"
 
       - name: Commit manifest changes
-        if: steps.verify-inputs.output.update-dag-ref == 'true'
+        if: steps.verify-inputs.outputs.update-dag-ref == 'true'
         run: |
           git add $VALUES_FILE
           git commit -m "chore(${{ inputs.environment }}): update git dag bundle ref to ${{ inputs.image-tag }}"
