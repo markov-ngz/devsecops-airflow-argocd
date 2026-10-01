@@ -105,9 +105,6 @@ jobs:
           echo "### Manifests to validate ($(wc -l < "$out"))" >> "$GITHUB_STEP_SUMMARY"
           sed 's/^/- `/; s/$/`/' "$out" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install kustomize pre built binaries to use it with kyverno
-        run: curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
-
       - name: Install kyverno cli # manual as the GH-provided action seems deprecated
         if: steps.diff.outputs.count != '0'
         run: |
@@ -140,8 +137,16 @@ jobs:
           CHANGED_FILE: ${{ steps.diff.outputs.file }}
         run: |
           resources=()
+          
+          # Building overlays before handling them to kyverno 
           while IFS= read -r f; do
-            resources+=(--resource "$f")
+            if [[ "$(basename "$f")" == kustomization.yaml ]]; then
+              out="$RUNNER_TEMP/$(echo "$f" | tr '/' '_').yaml"
+              kubectl kustomize "$(dirname "$f")" > "$out"
+              resources+=(--resource "$out")
+            else
+              resources+=(--resource "$f")
+            fi
           done < "$CHANGED_FILE"
 
           set +e
