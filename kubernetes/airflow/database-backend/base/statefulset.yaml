@@ -23,7 +23,7 @@ spec:
 
       containers:
         - name: postgres
-          image: airflow-database-backend:0.1.0
+          image: markreduce/airflow-database-backend:0.1.0
           securityContext:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
