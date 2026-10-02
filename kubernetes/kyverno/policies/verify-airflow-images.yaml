@@ -2,7 +2,6 @@ apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
   name: verify-airflow-images
-  namespace: k8s-governance-kyverno
 spec:
   validationActions:
     - Audit
