@@ -2528,7 +2528,7 @@ dagProcessor:
       classpath: "airflow.providers.git.bundles.git.GitDagBundle"
       kwargs:
         git_conn_id: "git_repo_conn"
-        tracking_ref: "release/0.0.1"
+        tracking_ref: "main"
         subdir: "airflow/dags"
         refresh_interval: 60
     - name: dags-folder
