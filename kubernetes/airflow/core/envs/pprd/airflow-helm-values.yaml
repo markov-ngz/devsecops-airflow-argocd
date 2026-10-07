@@ -67,7 +67,7 @@ images:
     repository: markreduce/pprd-airflow-cicd
     tag: ~
     # Specifying digest takes precedence over tag.
-    digest: sha256:a0d9e8a82cc8d2b05a4500b1d12bd37b5a1632f3a03d46cc81708ab2c8d48730
+    digest: sha256:be00f2851cfc18a82845d3f30294aedc246da1f74dd363916e7c8a50d78247df
     pullPolicy: Always
   # To avoid images with user code, you can turn this to 'true' and
   # all the 'run-airflow-migrations' and 'wait-for-airflow-migrations' jobs/containers
@@ -2528,7 +2528,7 @@ dagProcessor:
       classpath: "airflow.providers.git.bundles.git.GitDagBundle"
       kwargs:
         git_conn_id: "git_repo_conn"
-        tracking_ref: "main"
+        tracking_ref: "release/0.2.0"
         subdir: "airflow/dags"
         refresh_interval: 60
     - name: dags-folder
