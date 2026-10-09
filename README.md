@@ -4,15 +4,13 @@
 
 ### The Challenge
 
-**How can you automate the deployment and updates of an Apache Airflow cluster running on Kubernetes while maintaining security, reliability, and consistency across environments?**
+**How to automate the deployment of an Apache Airflow cluster running on Kubernetes while maintaining security, reliability, and consistency across environments?**
 
 This project addresses this challenge by implementing a secure, GitOps-driven CI/CD workflow built on three key technologies:
 
 - **[GitHub Actions](https://github.com/features/actions)** — Automates CI workflows, including validation, testing, and artifact builds.
 - **[Argo CD](https://argo-cd.readthedocs.io/)** — Automates application deployment and synchronization across Kubernetes environments using GitOps principles.
 - **[Kyverno](https://kyverno.io/)** — Enforces security policies and validates Kubernetes resources.
-
-Together, these tools provide an automated workflow for building, securing, and deploying Apache Airflow on Kubernetes.
 
 🎥 **Watch the full demo:** [YouTube video (French)](<youtube link>)
 
