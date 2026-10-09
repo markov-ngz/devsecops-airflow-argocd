@@ -1,0 +1,122 @@
+name: Deploy to pre-production
+
+on:
+  create:
+
+  workflow_dispatch:
+    inputs:
+      dev-image-tag :
+        description : "Tag of the image from development repository to use in pre-production"
+      mode:
+        description : "submit deployment or automatically deploy to pre-production"
+        required    : true
+        type        : choice
+        options :
+          - submit
+          - deploy
+
+jobs:
+  context:
+    name: Validate release branch and normalize basic inputs
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/heads/release/')
+    outputs:
+      release-branch : ${{ steps.context.outputs.release-branch }}
+      release-version: ${{ steps.context.outputs.release-version }}
+      dev-image-tag  : ${{ steps.context.outputs.dev-image-tag }}
+    steps:
+      - name: Context information needed
+        id: context
+        run: |
+          # Extract release version
+          RELEASE_BRANCH="${GITHUB_REF#refs/heads/}"
+          RELEASE_VERSION="${RELEASE_BRANCH#release/}"
+          
+          DEV_IMAGE_TAG=${{ inputs.dev-image-tag || github.sha  }}
+          # Release information
+          echo "release-branch=$RELEASE_BRANCH"   >> "$GITHUB_OUTPUT"
+          echo "release-version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          
+          # Event type conditional outputs 
+          echo "dev-image-tag=$DEV_IMAGE_TAG"     >> "$GITHUB_OUTPUT"
+
+      - name: Filter branch not matching expected pattern
+        id: filter
+        env:
+          RELEASE_BRANCH : ${{ steps.context.outputs.release-branch }}
+          RELEASE_VERSION: ${{ steps.context.outputs.release-version }}
+        run: |
+          # Basic semver context
+          if ! echo "$RELEASE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "❌ Branch name '$RELEASE_BRANCH' does not follow release/X.Y.Z convention."
+            echo "found=1" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "found=0" >> "$GITHUB_OUTPUT"
+          echo "✅ Release $RELEASE_VERSION validated (SHA: ${GITHUB_SHA})"
+
+      - name: Summary of context extraction
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          ### 📌 Context Extraction Summary:
+      
+          | **Property**         | **Value**                          |
+          |----------------------|------------------------------------|
+          | **Release Branch**   | ${{ steps.context.outputs.release-branch }} |
+          | **Release Version**  | ${{ steps.context.outputs.release-version }} |
+          | **Dev Image Tag**    | ${{ steps.context.outputs.dev-image-tag }} |
+          | **Status**           | ✅ Context validated               |
+      
+          ### 📤 Job Outputs:
+      
+          | **Output**           | **Value**                          |
+          |----------------------|------------------------------------|
+          | **Release Version**  | ${{ steps.context.outputs.release-version }} |
+          | **Dev Image Tag**    | ${{ steps.context.outputs.dev-image-tag }} |
+          EOF
+
+  promote-image-to-preproduction:
+    needs: 
+      - context
+    uses: ./.github/workflows/promote-image.yml
+    with:
+      source-repository       : ${{ vars.DOCKER_DEV_REPOSITORY }}
+      source-image-tag        : ${{ needs.context.outputs.dev-image-tag }}
+      destination-repository  : ${{ vars.DOCKER_PPRD_REPOSITORY }}
+      destination-image-tag   : ${{ needs.context.outputs.release-version }}
+    secrets:
+      registry-username       : ${{ secrets.DOCKERHUB_USERNAME }}
+      registry-password       : ${{ secrets.DOCKERHUB_PASSWORD }}
+
+
+  # ───────────────────────────────────────────────────
+  # Deploy to pre-production environment
+  # ───────────────────────────────────────────────────
+  deploy-preproduction-airflow:
+    needs:
+      - promote-image-to-preproduction
+      - context
+    uses: ./.github/workflows/submit-airflow-deployment.yml
+    with:
+      environment                 : pprd
+      image-name                  : ${{ vars.DOCKER_PPRD_REPOSITORY }}
+      image-tag                   : ${{ needs.context.outputs.release-version }}
+      git-dag-bundle-tracking-ref : ${{ needs.context.outputs.release-branch }}
+      mode                        : ${{ inputs.mode || 'deploy' }}
+    secrets:
+      GH_PAT_GITOPS_WF_DISPATCH: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+
+  # ───────────────────────────────────────────────────
+  # Advanced tests
+  # ───────────────────────────────────────────────────
+  smoke-tests:
+    name: Advanced tests
+    runs-on: ubuntu-latest
+    needs: deploy-preproduction-airflow
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run advanced test suite
+        run: |
+          echo "🧪 Running advanced tests …"

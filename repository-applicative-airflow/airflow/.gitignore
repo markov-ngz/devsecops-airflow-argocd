@@ -1,0 +1,10 @@
+*.cfg
+*.db-shm
+*.db
+*.db-shm
+*.db-wal
+logs
+__pycache__
+config
+secret.*
+.venv

@@ -1,0 +1,29 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.16.7
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        files: ^airflow/.*
+        args:
+          - ./airflow/
+          - --fix
+          - --config
+          - ./airflow/ruff.toml
+      # Run the formatter.
+      - id: ruff-format
+        files: ^airflow/.*
+        args:
+          - airflow/
+          - --config
+          - ./airflow/ruff.toml
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
+        name: Lint Dockerfiles
+        description: Runs hadolint to lint Dockerfiles
+        language: system
+        types: ["dockerfile"]
+        entry: hadolint

@@ -1,0 +1,351 @@
+name: Validate Airflow Docker Image
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - airflow/Dockerfile
+      - airflow/requirements.txt
+env:
+  DOCKERFILE: airflow/Dockerfile
+  CONTEXT: airflow
+  IMAGE_NAME: airflow-pr-${{ github.event.pull_request.number }}
+
+jobs:
+
+  # ──────────────────────────────────────────────
+  # Dockerfile linting ( hadolint )
+  # ──────────────────────────────────────────────
+  lint-dockerfile:
+    name: Hadolint - Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: ${{ env.DOCKERFILE }}
+          failure-threshold: warning
+          format: sarif
+          output-file: hadolint.sarif
+          no-color: false
+
+      - name: Upload Hadolint SARIF as Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hadolint-results
+          path: hadolint.sarif
+
+      - name: Hadolint
+        env:
+          SARIF_FILE: hadolint.sarif
+        run: |
+          # Check if the SARIF file exists
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "Error: SARIF file '$SARIF_FILE' not found."
+            exit 1
+          fi
+
+          # Capture Hadolint results
+          RESULTS=$(jq -r '.runs[0].results[] | "| \(.level) | \(.ruleId) | \(.message.text) | \(.locations[0].physicalLocation.region.startLine) |"' $SARIF_FILE 2>/dev/null)
+
+          # Add heading to summary
+          echo "### Hadolint Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check if there are any results (issues)
+          if [ -z "$RESULTS" ]; then
+            # No issues found
+            echo "✅ **All checks passed! No issues found.**" >> $GITHUB_STEP_SUMMARY
+          else
+            # Issues found - generate and display table
+            MARKDOWN_TABLE=$(
+              echo "| **Level** | **Rule ID** | **Message** | **Line** |"
+              echo "|----------|-------------|-------------|----------|"
+              echo "$RESULTS"
+            )
+            echo "$MARKDOWN_TABLE" >> $GITHUB_STEP_SUMMARY
+          fi
+# Note : for organization account use security built-in features instead of artifacts
+#      - name: Upload SARIF to GitHub Security tab
+#        if: always()
+#        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+#        with:
+#          sarif_file: hadolint.sarif
+#          category: hadolint
+      - name: Secret scanning
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
+        with:
+          base: develop
+          # Tweaking image injection to reference the image digest instead of the tag
+          image: "ghcr.io/trufflesecurity/trufflehog@sha256"
+          version: 52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db # v3.97.9
+
+  # ──────────────────────────────────────────────
+  # requirements.txt dependency scan (pip-audit)
+  # ──────────────────────────────────────────────
+  pip-audit:
+    name: pip-audit - Python dependency CVEs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Get python version
+        id: python-version
+        run: echo "python-version=$(cat airflow/.python-version)" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '${{ steps.python-version.outputs.python-version }}'
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      - name: Run pip-audit
+        run: |
+          pip-audit \
+            --requirement ${{ env.CONTEXT }}/requirements.txt \
+            --format json \
+            --output pip-audit-results.json \
+            --strict
+        continue-on-error: true
+
+      - name: Upload pip-audit results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+
+      - name: Print summary
+        if: always()
+        run: |
+          # Run pip-audit and capture its output
+          pip_audit_output=$(pip-audit \
+            --requirement ${{ env.CONTEXT }}/requirements.txt \
+            --format columns 2>&1 || true)
+          
+          # Write the output to the GitHub step summary
+          echo "### Pip Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "$pip_audit_output" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+
+  # ──────────────────────────────────────────────
+  # Base image CVE scan
+  # ──────────────────────────────────────────────
+  scan-base-image:
+    name: base image CVE scan + SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Extract the FROM image reference directly from
+      # the Dockerfile — works for single-stage images.
+      # For multi-stage, adjust the grep to target the
+      # right stage (e.g. the last FROM).
+      - name: Extract base image from Dockerfile
+        id: base
+        run: |
+          BASE_IMAGE=$(grep -i '^FROM' ${{ env.DOCKERFILE }} \
+            | tail -1 \
+            | awk '{print $2}')
+          echo "Base image detected: $BASE_IMAGE"
+          echo "image-name=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Pull base image
+        run: docker pull ${{ steps.base.outputs.image-name }}
+
+      # ------------------------------------------------------------------
+      #  Install : Grype and vulnerability database
+      # ------------------------------------------------------------------
+
+      - name: Prepare Cache or Retrieve Grype
+        id: cache-grype
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/bin/grype
+          key: grype-linux-amd64
+
+      - name: Install Grype
+        if: steps.cache-grype.outputs.cache-hit != 'true' &&  steps.cache-grype.outputs.cache-matched-key == ''
+        run: |
+          curl -sSfL https://get.anchore.io/grype | sudo sh -s -- -b /usr/local/bin
+
+      - name: Restore Grype Vulnerability Database
+        id: restore-grype-db
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        with:
+          path: /home/runner/.cache/grype/db/6/
+          key: grype-db-PLACEHOLDER
+          restore-keys: |
+            grype-db-
+
+      # ------------------------------------------------------------------
+      # Scan vulnerabilities
+      # ------------------------------------------------------------------
+
+      - name: Run security scan against SBOM
+        id: vuln
+        run: |
+          grype ${{ steps.base.outputs.image-name }} \
+            -o sarif=vuln-airflow.sarif.json \
+            -o json=vuln-airflow.json
+          
+          echo "sarif-file=vuln-airflow.sarif.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Grype security scan report artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vuln-airflow
+          path: ${{ steps.vuln.outputs.sarif-file }}
+          retention-days: 30
+
+      - name: Analyze SARIF for CVE severity summary
+        id: cve-check
+        env:
+          SARIF_FILE:  ${{ steps.vuln.outputs.sarif-file }}
+        run: |
+          
+          # ── Severity lives in results[].level, not rules[].properties.tags ──
+          # Grype SARIF level mapping:
+          #   error   → critical OR high  (need message text to split further)
+          #   warning → medium
+          #   note    → low
+          #   none    → negligible / unknown
+          
+          count_level() {
+            jq --arg lvl "$1" '
+              [.runs[].results[] | select(.level == $lvl)] | length
+            ' "$SARIF_FILE"
+          }
+          
+          # Split "error" into critical vs high via message text
+          count_severity_in_message() {
+            jq --arg sev "$1" '
+              [.runs[].results[]
+               | select(.level == "error")
+               | select(.message.text | ascii_downcase | contains($sev))]
+              | length
+            ' "$SARIF_FILE"
+          }
+          
+          CRITICAL=$(count_severity_in_message "critical")
+          HIGH=$(count_severity_in_message "high")
+          MEDIUM=$(count_level "warning")
+          LOW=$(count_level "note")
+          NEGLIGIBLE=$(count_level "none")
+          TOTAL=$(jq '[.runs[].results[]] | length' "$SARIF_FILE")
+          # unknowns = total - all accounted for
+          UNKNOWN=$(( TOTAL - CRITICAL - HIGH - MEDIUM - LOW - NEGLIGIBLE ))
+          
+          echo "critical=$CRITICAL"     >> "$GITHUB_OUTPUT"
+          echo "high=$HIGH"             >> "$GITHUB_OUTPUT"
+          echo "medium=$MEDIUM"         >> "$GITHUB_OUTPUT"
+          echo "low=$LOW"               >> "$GITHUB_OUTPUT"
+          echo "negligible=$NEGLIGIBLE" >> "$GITHUB_OUTPUT"
+          echo "unknown=$UNKNOWN"       >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL"           >> "$GITHUB_OUTPUT"
+          
+          # ── Markdown summary table ───────────────────────────────────────────
+          {
+            echo "### 🔍 Vulnerability Scan Results"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|----------|------:|"
+            echo "| 🔴 Critical   | $CRITICAL |"
+            echo "| 🟠 High       | $HIGH |"
+            echo "| 🟡 Medium     | $MEDIUM |"
+            echo "| 🔵 Low        | $LOW |"
+            echo "| ⚪ Negligible | $NEGLIGIBLE |"
+            echo "| ❓ Unknown    | $UNKNOWN |"
+            echo "| **Total**     | **$TOTAL** |"
+            echo ""
+            if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+              echo "> [!CAUTION]"
+              echo "> **$CRITICAL critical** and **$HIGH high** CVEs detected."
+              echo "> A developer must add \`[bypass-vuln-check]\` to their commit message to override."
+            else
+              echo "> [!NOTE]"
+              echo "> No critical or high vulnerabilities found. ✅"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pr-summary:
+    name: Comment workflow result to PR discussion
+    runs-on: ubuntu-latest
+    needs:
+      - lint-dockerfile
+      - pip-audit
+      - scan-base-image
+    if: always()
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Build summary body
+        id: summary
+        run: |
+          status_icon() {
+            case "$1" in
+              success)  echo "✅" ;;
+              failure)  echo "❌" ;;
+              skipped)  echo "⏭️" ;;
+              *)        echo "⚠️" ;;
+            esac
+          }
+
+          LINT_DOCKERFILE_STATUS="${{ needs.lint-dockerfile.result }}"
+          PIP_AUDIT_STATUS="${{ needs.pip-audit.result }}"
+          SCAN_BASE_IMAGE_STATUS="${{ needs.scan-base-image.result }}"
+
+          BODY=$(cat <<EOF
+          ## 🛡️ Security scan summary
+
+          | Step | Status |
+          |---|---|
+          | 1 · Lint Dockerfile | $(status_icon $LINT_DOCKERFILE_STATUS) \`$LINT_DOCKERFILE_STATUS\` |
+          | 2 · pip requirements CVEs | $(status_icon $PIP_AUDIT_STATUS) \`$PIP_AUDIT_STATUS\` |
+          | 3 · Scan base image | $(status_icon $SCAN_BASE_IMAGE_STATUS) \`$SCAN_BASE_IMAGE_STATUS\` |
+
+          > Artifacts (pip-audit and vulnerability scans) are attached to this workflow run.
+          EOF
+          )
+
+          {
+            echo "body<<EOF_SUMMARY"
+            echo "$BODY"
+            echo "EOF_SUMMARY"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "body<<EOF_SUMMARY"
+            echo "$BODY"
+            echo "EOF_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Find existing summary comment
+        id: find-comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "🛡️ Security scan summary"
+
+      - name: Create or update PR comment
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ steps.summary.outputs.body }}
+          edit-mode: replace

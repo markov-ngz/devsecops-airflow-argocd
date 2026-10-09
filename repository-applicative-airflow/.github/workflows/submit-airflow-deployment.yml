@@ -1,0 +1,224 @@
+name: Submit Airflow Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: string
+      image-name:
+        description: "Docker image name"
+        required: true
+        type: string
+      image-tag:
+        description: "Docker image tag"
+        required: true
+        type: string
+      git-dag-bundle-tracking-ref:
+        description: "Git dag bundle trackingref to update" # used to dynamically update release branch ref
+        required: false
+        type: string
+      mode:
+        description: "submit deployment or automatically deploy to specified environment ( not available for production )"
+        default: "submit"
+        type: string
+    secrets:
+      GH_PAT_GITOPS_WF_DISPATCH:
+        required: true
+jobs:
+  submit-airflow-deployment:
+    name: Automatically submit the new image to be deployed to development environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITOPS_REPO               : ${{ vars.GITOPS_REPO }}
+      GIT_DAG_BUNDLE_NAME       : devsecops-lab-airflow
+      GITOPS_AIRFLOW_DEPLOYMENT : airflow-update-deployment.yml
+    steps:
+      # ── 1. Trigger the remote workflow ────────────────────────────────────
+      - name: Trigger workflow dispatch
+        id: trigger
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+        run: |
+          # Capture the timestamp BEFORE dispatching so we can find the run
+          BEFORE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "before_ts=${BEFORE}" >> "$GITHUB_OUTPUT"
+
+          gh workflow run $GITOPS_AIRFLOW_DEPLOYMENT \
+            --repo $GITOPS_REPO \
+            --field environment="${{ inputs.environment }}" \
+            --field image-name="${{ inputs.image-name }}" \
+            --field image-tag="${{ inputs.image-tag }}" \
+            --field git-dag-bundle-name="${GIT_DAG_BUNDLE_NAME}" \
+            --field git-dag-bundle-tracking-ref="${{ inputs.git-dag-bundle-tracking-ref }}" \
+            --field mode="${{ inputs.mode }}"
+
+          echo "Workflow dispatch sent successfully."
+
+      # ── 2. Wait for the run to be registered, then capture its ID ─────────
+      - name: Resolve run ID
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+        run: |
+          BEFORE="${{ steps.trigger.outputs.before_ts }}"
+          RUN_ID=""
+          
+          echo "Waiting for the new run to appear..."
+          for attempt in $(seq 1 10); do
+            sleep 10
+            RUN_ID=$(gh run list \
+              --repo $GITOPS_REPO \
+              --workflow $GITOPS_AIRFLOW_DEPLOYMENT \
+              --branch main \
+              --json databaseId,createdAt,status \
+              | jq -r --arg before "$BEFORE" \
+                  '[.[] | select(.createdAt >= $before)] | first | .databaseId // empty')
+          
+            if [[ -n "$RUN_ID" ]]; then
+              echo "Found run ID: ${RUN_ID}"
+              echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            echo "Attempt ${attempt}/10 — run not visible yet, retrying..."
+          done
+          
+          if [[ -z "$RUN_ID" ]]; then
+            echo "::error::Could not resolve the triggered run ID after 10 attempts."
+            exit 1
+          fi
+
+      # ── 3. Poll every 30 s until the run reaches a terminal state ─────────
+      - name: Poll until completion
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+        run: |
+          RUN_ID="${{ steps.resolve.outputs.run_id }}"
+          RUN_URL="https://github.com/$GITOPS_REPO/actions/runs/${RUN_ID}" # assuming not ghe 
+          echo "Monitoring: ${RUN_URL}"
+
+          MAX_WAIT=3600   # 1 hour hard cap
+          ELAPSED=0
+
+          while (( ELAPSED < MAX_WAIT )); do
+            PAYLOAD=$(gh run view "$RUN_ID" \
+              --repo $GITOPS_REPO \
+              --json status,conclusion,url)
+
+            STATUS=$(echo "$PAYLOAD"     | jq -r '.status')
+            CONCLUSION=$(echo "$PAYLOAD" | jq -r '.conclusion')
+
+            echo "[$(date -u +%H:%M:%SZ)] status=${STATUS}  conclusion=${CONCLUSION}"
+
+            # Terminal states
+            if [[ "$STATUS" == "completed" ]]; then
+              echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
+              echo "run_url=${RUN_URL}"        >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            if (( ELAPSED >= MAX_WAIT )); then
+              echo "::error::Polling timed out after ${MAX_WAIT}s."
+              echo "conclusion=timed_out" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+
+            sleep 30
+            ELAPSED=$(( ELAPSED + 30 ))
+          done
+
+      # ── 4a. On success — fetch job outputs and write step summary ─────────
+      - name: Report success
+        if: steps.poll.outputs.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+        run: |
+          RUN_ID="${{ steps.resolve.outputs.run_id }}"
+
+          # Retrieve the job outputs exposed by the triggered workflow
+          OUTPUTS=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '.jobs[] | select(.name == "update") |
+                  .steps[] | select(.conclusion == "success") |
+                  { name: .name, conclusion: .conclusion }')
+
+          # Fetch workflow-level outputs via the run's artifacts/jobs API.
+          # The remote workflow exposes outputs on the "update" job.
+          JOB_OUTPUTS=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '.jobs[] | select(.name == "update") | .steps')
+
+          PR_NUMBER=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '[.jobs[].steps[].outputs // empty] | first | .["pull-request-number"] // "N/A"' \
+            2>/dev/null || echo "N/A")
+
+          PR_URL=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '[.jobs[].steps[].outputs // empty] | first | .["pull-request-url"] // "N/A"' \
+            2>/dev/null || echo "N/A")
+
+          PR_BRANCH=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '[.jobs[].steps[].outputs // empty] | first | .["pull-request-branch"] // "N/A"' \
+            2>/dev/null || echo "N/A")
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ✅ Airflow Deployment Update — Succeeded
+
+          | Parameter        | Value |
+          |------------------|-------|
+          | **Environment**  | ${{ inputs.environment}} |
+          | **Image name**   | ${{ vars.DOCKER_DEV_REGISTRY }} |
+          | **Image tag**    | ${{ inputs.image-tag}} |
+
+          ### Pull-Request Outputs
+
+          | Output                 | Value |
+          |------------------------|-------|
+          | Pull-request number    | ${PR_NUMBER} |
+          | Pull-request URL       | ${PR_URL} |
+          | Pull-request branch    | ${PR_BRANCH} |
+
+          🔗 [View triggered run](${{ steps.poll.outputs.run_url }})
+          EOF
+
+      # ── 4b. On failure — write error summary and fail this job ────────────
+      - name: Report failure
+        if: steps.poll.outputs.conclusion != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}
+        run: |
+          RUN_ID="${{ steps.resolve.outputs.run_id }}"
+          CONCLUSION="${{ steps.poll.outputs.conclusion }}"
+
+          # Collect failed steps for context
+          FAILED_STEPS=$(gh api \
+            "/repos/${GITOPS_REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '[.jobs[].steps[] | select(.conclusion == "failure") |
+                   "• **" + (.name // "unknown step") + "** — " + (.conclusion // "")]
+                  | join("\n")' \
+            2>/dev/null || echo "_(could not retrieve failed steps)_")
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ❌ Airflow Deployment Update — ${CONCLUSION^}
+
+          | Parameter       | Value |
+          |-----------------|-------|
+          | **Environment** | ${{ inputs.environment }} |
+          | **Image name**  | ${{ vars.DOCKER_DEV_REGISTRY }} |
+          | **Image tag**   | ${{ inputs.image-tag}} |
+          | **Conclusion**  | \`${CONCLUSION}\` |
+
+          ### Failed Steps
+
+          ${FAILED_STEPS}
+
+          🔗 [View triggered run for full logs](${{ steps.poll.outputs.run_url }})
+          EOF
+
+          echo "::error::Downstream workflow finished with conclusion '${CONCLUSION}'. See the step summary for details."
+          exit 1

@@ -1,0 +1,65 @@
+name: Deploy to production new airflow image
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+    paths:
+      - 'airflow/requirements.txt'
+      - 'airflow/Dockerfile'
+
+jobs:
+
+  # ───────────────────────────────────────────────────
+  # Extract release tag merged from main
+  # ───────────────────────────────────────────────────
+  context:
+    name: Extract release tag merged from main
+    runs-on: ubuntu-latest
+    # Filter: PR must be merged (not just closed) AND source must be release/**
+    if: |
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    outputs:
+      release-branch  : ${{ steps.context.outputs.release-branch }}
+      release-version : ${{ steps.context.outputs.release-version }}
+    steps:
+      - name: Context information needed
+        id: context
+        run: |
+          RELEASE_BRANCH="${{ github.event.pull_request.head.ref }}"
+          RELEASE_VERSION="${RELEASE_BRANCH#release/}"
+
+          echo "release-branch=$RELEASE_BRANCH"   >> "$GITHUB_OUTPUT"
+          echo "release-version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+  # ───────────────────────────────────────────────────
+  # Promote pre-production image to production
+  # ───────────────────────────────────────────────────
+  promote-image-to-production:
+    needs: 
+      - context
+    uses: ./.github/workflows/promote-image.yml
+    with:
+      source-repository       : ${{ vars.DOCKER_PPRD_REPOSITORY }}
+      source-image-tag        : ${{ needs.context.outputs.release-version }}
+      destination-repository  : ${{ vars.DOCKER_PROD_REPOSITORY }}
+      destination-image-tag   : ${{ needs.context.outputs.release-version }}
+    secrets:
+      registry-username       : ${{ secrets.DOCKERHUB_USERNAME }}
+      registry-password       : ${{ secrets.DOCKERHUB_PASSWORD }}
+
+  submit-production-deployment:
+    needs:
+      - promote-image-to-production
+      - context
+    uses: ./.github/workflows/submit-airflow-deployment.yml
+    with:
+      environment : prod
+      image-name  : ${{ vars.DOCKER_PROD_REPOSITORY }}
+      image-tag   : ${{ needs.context.outputs.release-version }}
+      mode        : submit
+    secrets:
+      GH_PAT_GITOPS_WF_DISPATCH: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }}

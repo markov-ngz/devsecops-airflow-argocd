@@ -1,0 +1,153 @@
+name: Nightly Job
+
+
+on:
+  # schedule:
+  #   - cron: '0 0 * * *'  # daily at midnight UTC
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  cache-anchore-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ------------------------------------------------------------------
+      # Install Cosign : stale cache as long it is expired ( 7 days )
+      # ------------------------------------------------------------------
+
+      - name: Restore cosign
+        id: restore-cosign
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        with:
+          path: /usr/local/bin/cosign
+          key: cosign-linux-amd64
+          restore-keys: |
+            cosign-linux-amd64
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: steps.restore-cosign.outputs.cache-hit  != 'true'
+        with:
+          cosign-release: v3.1.3
+          install-dir: /usr/local/bin
+
+      - name: Cache cosign
+        id: cache-cosign
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        if: steps.restore-cosign.outputs.cache-hit  != 'true'
+        with:
+          path: /usr/local/bin/cosign
+          key: cosign-linux-amd64
+
+      # ------------------------------------------------------------------
+      # Install Grype binary : stale cache as long it is expired ( 7 days )
+      # ------------------------------------------------------------------
+
+      - name: Restore Grype
+        id:  restore-grype
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        with:
+          path: /usr/local/bin/grype
+          key: grype-linux-amd64
+          restore-keys: |
+            grype-linux-amd64
+
+      - name: Install Grype
+        if: steps.restore-grype.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL https://get.anchore.io/grype | sudo sh -s -v -- -b /usr/local/bin
+
+      - name: Cache Grype
+        id:  cache-grype
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        if: steps.restore-grype.outputs.cache-hit != 'true'
+        with:
+          path: /usr/local/bin/grype
+          key: grype-linux-amd64
+
+      - name: Show Grype configuration
+        run: grype config
+
+      # ------------------------------------------------------------------
+      # Grype Vulnerability DB
+      # ------------------------------------------------------------------
+      - name: Restore Grype Db
+        id: restore-grype-db
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 #  6.1.0
+        with:
+          path: /home/runner/.cache/grype/db/6/
+          key: grype-db-PLACEHOLDER
+          restore-keys: |
+            grype-db-
+
+      - name : If there is a match then update
+        if: steps.restore-grype-db.outputs.cache-matched-key != ''
+        run: |
+          echo "Cache hit found. Updating existing database..."
+          grype db update
+
+
+      - name: If there is no match then download it to expected path
+        if: steps.restore-grype-db.outputs.cache-matched-key == ''
+        env:
+          GRYPE_BASE_ENDPOINT: https://grype.anchore.io/databases/v6 # ! must not end with trailing '/'
+        run: source tools/ci/grype-db-import.sh
+
+      - name: debug
+        run: ls /home/runner/.cache/grype/db/
+
+      - name: Save to cache Grype database
+        id: cache-grype-database
+        uses: ./.github/actions/cache-file-by-hash
+        with:
+          path: /home/runner/.cache/grype/db/6/
+          base-cache-key: grype-db-
+
+      - name: Evict former cached values for the given key older than 2 days
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_GITOPS_WF_DISPATCH }} # need repo scope to delete cache entry
+        run: |
+          # Fetch Grype DB caches
+          CACHED_GRYPE_DB=$(gh cache list \
+            --jq 'map(select(.key | startswith("grype-db")))' \
+            --json id,key,ref,createdAt,lastAccessedAt,sizeInBytes,version
+          )
+        
+          echo "Grype Vulnerability DB cached:"
+          echo "$CACHED_GRYPE_DB" | jq .
+        
+          # Keep the 2 most recent DB caches, evict the rest
+          EVICTED_GRYPE_DB=$(echo "$CACHED_GRYPE_DB" | jq 'sort_by(.createdAt) | reverse | .[2:]')
+          KEPT_GRYPE_DB=$(echo "$CACHED_GRYPE_DB" | jq 'sort_by(.createdAt) | reverse | .[:2]')
+        
+          echo "Grype Vulnerability DB to be evicted:"
+          echo "$EVICTED_GRYPE_DB" | jq .
+        
+          # Delete evicted caches
+          echo "$EVICTED_GRYPE_DB" | jq -r '.[].id' | while read -r item; do
+            echo "Deleting cache with ID: $item"
+            gh cache delete "$item"
+          done
+        
+          # Display GitHub step summary
+          {
+            echo "# Grype DB Cache Management Summary"
+            echo ""
+            echo ""
+            echo "| ID | Key | Created At | Status |"
+            echo "|---|---|---|---|"
+        
+            # Add evicted caches
+            echo "$EVICTED_GRYPE_DB" | jq -r '
+              .[] |
+              "| \(.id) | \(.key) | \(.createdAt) | Evicted |"
+            '
+        
+            # Add kept caches
+            echo "$KEPT_GRYPE_DB" | jq -r '
+              .[] |
+              "| \(.id) | \(.key) | \(.createdAt) | Kept |"
+            '
+          } >> "$GITHUB_STEP_SUMMARY"
