@@ -2,8 +2,6 @@
 
 ## Overview
 
-### The Challenge
-
 **How to automate the deployment of an Apache Airflow cluster running on Kubernetes while maintaining security, reliability, and consistency across environments?**
 
 This project addresses this challenge by implementing a secure, GitOps-driven CI/CD workflow built on three key technologies:
