@@ -39,34 +39,6 @@ The project separates application development from infrastructure management usi
 | **Application Repository** | Defines what is developed and built, including Airflow DAGs, Docker images, dependencies, and other application artifacts. | Produce and promote application artifacts across environments while maintaining application quality. | Validate application changes, enforce security checks, and build versioned artifacts. |
 | **Infrastructure Repository** | Defines what is deployed and how it is deployed, including Kubernetes manifests, Helm values, and deployment configuration. | Manage application deployments and maintain consistent configuration across environments. | Validate infrastructure configurations, enforce security checks, and ensure deployment manifests comply with established policies. |
 
-### Application Repository
-
-The application repository contains the source code and artifacts required to run Apache Airflow.
-
-Typical responsibilities include:
-
-- Developing and maintaining Airflow DAGs.
-- Managing Python dependencies and other application components.
-- Building and versioning Docker images.
-- Running code quality checks and security scans.
-- Publishing application artifacts.
-- Promoting validated artifacts across environments.
-
-### Infrastructure Repository
-
-The infrastructure repository contains the configuration required to deploy and manage Apache Airflow on Kubernetes.
-
-Typical responsibilities include:
-
-- Maintaining Kubernetes manifests and Helm chart values.
-- Managing environment-specific configuration.
-- Validating deployment manifests.
-- Enforcing security policies.
-- Managing configuration changes through Git.
-- Triggering deployments through Argo CD.
-
-This separation of concerns makes application delivery more independent from infrastructure management while improving traceability, security, and maintainability.
-
 ---
 
 ## Architecture
