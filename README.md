@@ -10,10 +10,6 @@ This project addresses this challenge by implementing a secure, GitOps-driven CI
 - **[Argo CD](https://argo-cd.readthedocs.io/)** — Automates application deployment and synchronization across Kubernetes environments using GitOps principles.
 - **[Kyverno](https://kyverno.io/)** — Enforces security policies and validates Kubernetes resources.
 
-🎥 **Watch the full demo:** [YouTube video (French)](<youtube link>)
-
-The video provides a live demonstration and detailed explanations of the architecture and workflows.
-
 ---
 
 ## Table of Contents
@@ -156,4 +152,3 @@ If you find this repository useful, please consider giving it a ⭐ **star** on 
 
 Your support helps make the project more visible and encourages further improvements.
 
-If you would like to learn more about the implementation, watch the full demo on YouTube (French).
